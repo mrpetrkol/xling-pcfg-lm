@@ -636,7 +636,7 @@ def main():
     log_plot(wandb.run, fig1, step=trainer.state.global_step, label="gpt2_en1_vs_pcfg")
     log_plot(wandb.run, fig2, step=trainer.state.global_step, label="gpt2_en2_vs_pcfg")
     log_plot(wandb.run, fig3, step=trainer.state.global_step, label="gpt2_en1_vs_en2")
-    log_plot_as_artifact(wandb.run, fig3, label="en1_vs_en2")
+    # log_plot_as_artifact(wandb.run, fig3, label="en1_vs_en2")
 
     wandb.run.log({
             "cross_entropy_lm_en1": -np.mean(lm_probs_en1),
