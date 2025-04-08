@@ -517,7 +517,7 @@ def main():
     vocab = augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2'))
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
     # datasets = load_data(tokenizer, 'lm_training/corpora', add_language_pseudo_suffixes=True, p=0.8)
-    datasets = load_data(tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", add_language_pseudo_suffixes=True, p=0.5)
+    datasets = load_data(tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", add_language_pseudo_suffixes=True, p=args.p)
 
     is_mlm = False
 
