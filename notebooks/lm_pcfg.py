@@ -9,7 +9,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 from PIL import Image
 from scipy.stats import spearmanr
 from sklearn.metrics import r2_score
@@ -146,24 +146,28 @@ def tokenize_wrapper(tokenizer):
         return {"input_ids": input_ids}
     return tokenize
 
-def load_data(
+
+def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from the original corpora
     tokenizer: PreTrainedTokenizerFast,
-    data_dir: str,
+    corpora_original_dir: str,
+
     train_size: Optional[int] = None,
     dev_size: Optional[int] = None,
     test_size: Optional[int] = None,
-    train_file: str = 'train.txt',
-    dev_file: str = 'dev.txt',
-    test_file: str = 'test.txt',
-    eval_file: Optional[str] = 'eval.txt',
+
     add_language_pseudo_suffixes: bool = False,
-    p: float = 0.6,
+    p: float = 1.0,
 ) -> DatasetDict:
-    raw_train = load_dataset("text", data_files=os.path.join(data_dir, train_file))["train"]
-    raw_dev = load_dataset("text", data_files=os.path.join(data_dir, dev_file))["train"]
-    raw_test = load_dataset("text", data_files=os.path.join(data_dir, test_file))["train"]
+    train_file = 'train.txt'
+    dev_file = 'dev.txt'
+    test_file = 'test.txt'
+    eval_file = 'eval.txt'
+
+    raw_train = load_dataset("text", data_files=os.path.join(corpora_original_dir, train_file))["train"]
+    raw_dev = load_dataset("text", data_files=os.path.join(corpora_original_dir, dev_file))["train"]
+    raw_test = load_dataset("text", data_files=os.path.join(corpora_original_dir, test_file))["train"]
     if eval_file is not None:
-        raw_eval = load_dataset("text", data_files=os.path.join(data_dir, eval_file))["train"]
+        raw_eval = load_dataset("text", data_files=os.path.join(corpora_original_dir, eval_file))["train"]
     else:
         raw_eval = None
 
@@ -195,6 +199,96 @@ def load_data(
 
     return tokenized_datasets
 
+
+
+def load_data_experiment_1(
+    tokenizer: PreTrainedTokenizerFast,
+    corpora_original: str,
+    corpora_swapped: str,
+    train_size: Optional[int] = None,
+    dev_size: Optional[int] = None,
+    test_size: Optional[int] = None,
+
+    add_language_pseudo_suffixes: bool = False,  # not used actually
+    p: float = 1.0,
+) -> DatasetDict:
+
+    train_file = "train.txt"
+    dev_file = "dev.txt"
+    test_file = "test.txt"
+    eval_file = "eval.txt"
+
+    raw_train_orig = load_dataset("text", data_files=os.path.join(corpora_original, train_file))["train"]
+    raw_train_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, train_file))["train"]
+
+    raw_dev_orig = load_dataset("text", data_files=os.path.join(corpora_original, dev_file))["train"]
+    raw_dev_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, dev_file))["train"]
+
+    raw_test_orig = load_dataset("text", data_files=os.path.join(corpora_original, test_file))["train"]
+    raw_test_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, test_file))["train"]
+
+    try:
+        raw_eval_orig = load_dataset("text", data_files=os.path.join(corpora_original, eval_file))["train"]
+        raw_eval_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, eval_file))["train"]
+        eval_exists = True
+    except Exception:
+        eval_exists = False
+
+    if train_size is not None:
+        raw_train_orig = raw_train_orig.shuffle().select(range(train_size))
+        raw_train_swap = raw_train_swap.shuffle().select(range(train_size))
+    if dev_size is not None:
+        raw_dev_orig = raw_dev_orig.shuffle().select(range(dev_size))
+        raw_dev_swap = raw_dev_swap.shuffle().select(range(dev_size))
+    if test_size is not None:
+        raw_test_orig = raw_test_orig.shuffle().select(range(test_size))
+        raw_test_swap = raw_test_swap.shuffle().select(range(test_size))
+    if eval_exists and test_size is not None:
+        raw_eval_orig = raw_eval_orig.shuffle().select(range(test_size))
+        raw_eval_swap = raw_eval_swap.shuffle().select(range(test_size))
+
+    def combine_pairs(orig_texts, swap_texts, p):
+        combined = []
+        for i in range(min(len(orig_texts), len(swap_texts))):
+            if random.random() < p:
+                sentence = orig_texts[i]
+                suffix = "_en1"
+            else:
+                sentence = swap_texts[i]
+                suffix = "_en2"
+            tokens = sentence.split()
+            processed_tokens = []
+            for token in tokens:
+                if re.search(r"[A-Za-z0-9]", token):
+                    processed_tokens.append(token + suffix)
+                else:
+                    processed_tokens.append(token)
+            combined.append(" ".join(processed_tokens))
+        return combined
+
+    combined_train = combine_pairs(raw_train_orig["text"], raw_train_swap["text"], p)
+    combined_dev = combine_pairs(raw_dev_orig["text"], raw_dev_swap["text"], p)
+    combined_test = combine_pairs(raw_test_orig["text"], raw_test_swap["text"], p)
+    if eval_exists:
+        combined_eval = combine_pairs(raw_eval_orig["text"], raw_eval_swap["text"], p)
+    else:
+        combined_eval = None
+
+    dataset_dict = {
+        "train": Dataset.from_dict({"text": combined_train}),
+        "valid": Dataset.from_dict({"text": combined_dev}),
+        "test": Dataset.from_dict({"text": combined_test}),
+    }
+    if combined_eval is not None:
+        dataset_dict["eval"] = Dataset.from_dict({"text": combined_eval})
+    raw_datasets = DatasetDict(dataset_dict)
+
+    tokenized_datasets = raw_datasets.map(
+        tokenize_wrapper(tokenizer),
+        batched=True,
+    )
+
+    return tokenized_datasets
 
 def initialize_model(
     tokenizer: PreTrainedTokenizer, model_type: str, is_mlm: bool = True, **config
@@ -406,10 +500,13 @@ def log_plot_as_artifact(run, fig, label=None):
 
 ### MAIN LOOP
 
+load_data__for_evaluation = load_data_experiment_0
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--p", type=float, required=True)
+    parser.add_argument("--experiment", type=int, choices=range(3), required=True)
     args = parser.parse_args()
 
     print(f"p = {args.p}")
@@ -423,8 +520,13 @@ def main():
         vocab["<EOS>"] = len(vocab)
     vocab = augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2'))
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
-    datasets = load_data(tokenizer, 'lm_training/corpora', add_language_pseudo_suffixes=True, p=0.8)
-    # datasets = load_data(tokenizer, 'lm_training/corpora_light', add_language_pseudo_suffixes=True, p=args.p)
+
+    if args.experiment == 0:
+        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora', add_language_pseudo_suffixes=True, p=args.p)
+    elif args.experiment == 1:
+        datasets = load_data_experiment_1(
+            tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", add_language_pseudo_suffixes=True, p=args.p,
+        )
 
     is_mlm = False
 
@@ -481,8 +583,7 @@ def main():
         data_collator,
         datasets,
         output_dir='checkpoints',
-        max_steps=22_000,
-        save_steps=10_000, 
+        save_steps=10_000,
         eval_steps=100, 
         logging_steps=100,
         per_device_train_batch_size=batch_size,
@@ -526,14 +627,16 @@ def main():
         pcfg_dict = pickle.load(f)
 
     # _en1
-    datasets_lm = load_data(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=1.0)
-    datasets_pcfg = load_data(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
+    # datasets_lm might be different from the datsets_pcfg but we need to obtain exactly the same sentences for "eval" as in pcfg_dict
+    # ... thus two different variables here.
+    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=1.0)
+    datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
 
     # _en2
-    datasets_lm = load_data(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=0.0)
-    datasets_pcfg = load_data(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
+    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=0.0)
+    datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
     lm_probs_en2, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig2 = plot_probs(lm_probs_en2, pcfg_probs, "GPT2 EN2 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en2_vs_pcfg")
 
@@ -552,6 +655,10 @@ def main():
         },
         step=trainer.state.global_step,
     )
+
+    print("cross_entropy_lm_en1:", -np.mean(lm_probs_en1))
+    print("cross_entropy_lm_en2:", -np.mean(lm_probs_en2))
+    print("cross_entropy_pcfg:", -np.mean(pcfg_probs))
 
 
 if __name__ == "__main__":
