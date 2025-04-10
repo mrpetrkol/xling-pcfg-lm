@@ -171,11 +171,11 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
     dev_size: Optional[int] = None,
     test_size: Optional[int] = None,
 
+    train_file = 'train.txt',
+    dev_file = 'dev.txt',
+    test_file = 'test.txt',
+    eval_file = 'eval.txt',
 ) -> DatasetDict:
-    train_file = 'train.txt'
-    dev_file = 'dev.txt'
-    test_file = 'test.txt'
-    eval_file = 'eval.txt'
 
     raw_train = load_dataset("text", data_files=os.path.join(corpora_original_dir, train_file))["train"]
     raw_dev = load_dataset("text", data_files=os.path.join(corpora_original_dir, dev_file))["train"]
@@ -562,7 +562,7 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
     if args.experiment == 0:
-        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora_11mil', p=args.p, add_language_pseudo_suffixes=True)
+        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora_11mil', p=args.p, add_language_pseudo_suffixes=True, eval_file=None)
     elif args.experiment == 1:
         datasets = load_data_experiment_1(
             tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", p=args.p, add_language_pseudo_suffixes=True,
