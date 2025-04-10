@@ -562,7 +562,7 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
     if args.experiment == 0:
-        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora', p=args.p, add_language_pseudo_suffixes=True)
+        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora_11mil', p=args.p, add_language_pseudo_suffixes=True)
     elif args.experiment == 1:
         datasets = load_data_experiment_1(
             tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", p=args.p, add_language_pseudo_suffixes=True,
