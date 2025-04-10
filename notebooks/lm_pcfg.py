@@ -23,7 +23,7 @@ import torch
 
 import argparse
 
-def preprocess_function(examples, p=0.5):
+def preprocess_function(examples, p):
     processed = []
     for text in examples["text"]:
         suffix = "_en1" if random.random() < p else "_en2"
@@ -36,6 +36,19 @@ def preprocess_function(examples, p=0.5):
                 processed_tokens.append(token)
         processed.append(" ".join(processed_tokens))
     return {"text": processed}
+
+
+def assign_language_suffix(example, index, total_length, p):
+    # Calculate the threshold index for suffix _en1
+    threshold = int(total_length * p)
+    suffix = "_en1" if index < threshold else "_en2"
+    tokens = example["text"].split()
+    processed_tokens = [
+        token + suffix if re.search(r'[A-Za-z0-9]', token) else token
+        for token in tokens
+    ]
+    return {"text": " ".join(processed_tokens)}
+
 
 def augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2')):
     new_vocab = {}
@@ -151,12 +164,13 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
     tokenizer: PreTrainedTokenizerFast,
     corpora_original_dir: str,
 
+    p: float = 1.0,
+    add_language_pseudo_suffixes: bool = False,
+
     train_size: Optional[int] = None,
     dev_size: Optional[int] = None,
     test_size: Optional[int] = None,
 
-    add_language_pseudo_suffixes: bool = False,
-    p: float = 1.0,
 ) -> DatasetDict:
     train_file = 'train.txt'
     dev_file = 'dev.txt'
@@ -190,7 +204,30 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
     raw_datasets = DatasetDict(dataset_dict)
 
     if add_language_pseudo_suffixes:
-        raw_datasets = raw_datasets.map(lambda ex: preprocess_function(ex, p=p), batched=True)  # !!!
+        for split in raw_datasets.keys():
+            # shuffle again
+            raw_datasets[split] = raw_datasets[split].map(
+                lambda ex, idx: {"original_index": idx},
+                with_indices=True,
+                batched=False,
+            )
+            raw_datasets[split] = raw_datasets[split].shuffle()
+
+            total_length = len(raw_datasets[split])
+            raw_datasets[split] = raw_datasets[split].map(
+                lambda ex, idx: assign_language_suffix(ex, idx, total_length, p),
+                with_indices=True,
+                batched=False,
+            )
+
+            # restore order
+            raw_datasets[split] = raw_datasets[split].sort("original_index")
+
+    # # second shuffle to randomize the effect of assigning _en1 and _en2...
+    # # it's needed for all datasets regardles if they have pseudo_suffixes or not...
+    # # e.g. to compare cross_entropy scores (datasets_lm["eval"] with _en1 & _en2) vs (datasets_pcfg["eval"])
+    # for split in raw_datasets.keys():
+    #     raw_datasets[split] = raw_datasets[split].shuffle(seed=42)
 
     tokenized_datasets = raw_datasets.map(
         tokenize_wrapper(tokenizer),
@@ -205,12 +242,15 @@ def load_data_experiment_1(
     tokenizer: PreTrainedTokenizerFast,
     corpora_original: str,
     corpora_swapped: str,
+
+    p: float,
+
+    add_language_pseudo_suffixes: bool = False,  # not used actually
+
     train_size: Optional[int] = None,
     dev_size: Optional[int] = None,
     test_size: Optional[int] = None,
 
-    add_language_pseudo_suffixes: bool = False,  # not used actually
-    p: float = 1.0,
 ) -> DatasetDict:
 
     train_file = "train.txt"
@@ -522,10 +562,10 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
     if args.experiment == 0:
-        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora', add_language_pseudo_suffixes=True, p=args.p)
+        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora', p=args.p, add_language_pseudo_suffixes=True)
     elif args.experiment == 1:
         datasets = load_data_experiment_1(
-            tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", add_language_pseudo_suffixes=True, p=args.p,
+            tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", p=args.p, add_language_pseudo_suffixes=True,
         )
 
     is_mlm = False
@@ -629,13 +669,13 @@ def main():
     # _en1
     # datasets_lm might be different from the datsets_pcfg but we need to obtain exactly the same sentences for "eval" as in pcfg_dict
     # ... thus two different variables here.
-    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=1.0)
+    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, p=1.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0)
     datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
 
     # _en2
-    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, train_size=0, dev_size=0, test_size=0, add_language_pseudo_suffixes=True, p=0.0)
+    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, p=0.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0)
     datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
     lm_probs_en2, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig2 = plot_probs(lm_probs_en2, pcfg_probs, "GPT2 EN2 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en2_vs_pcfg")
