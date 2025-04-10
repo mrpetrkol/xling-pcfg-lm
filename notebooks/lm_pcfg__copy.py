@@ -4,9 +4,11 @@ import os
 import copy
 import pickle
 import random
+from tqdm import tqdm
 import re
 from typing import *
 from typing import Optional
+import operator
 
 import nltk
 from nltk import Tree
@@ -77,8 +79,9 @@ def swap_rules(ex, index, total_length, p, original_tree):
         return {"text": ex['text']}
     else:  # the below corresponds to _en2
         orig_sentence = " ".join(original_tree.leaves())
-        swapped_tree = copy.deepcopy(original_tree)
-        swap_children(swapped_tree)
+        # swapped_tree = copy.deepcopy(original_tree)
+        swapped_tree = original_tree
+        swap_children(original_tree)
         swapped_sentence = " ".join(swapped_tree.leaves())
 
         # print(orig_sentence)
@@ -200,6 +203,15 @@ def tokenize_wrapper(tokenizer):
     return tokenize
 
 
+
+###### ============================================================================================================
+
+def process_batch(batch, indices, total_length, p, trees_split):
+    processed = [swap_rules({k: batch[k][i] for k in batch}, indices[i], total_length, p, trees_split[indices[i]]) for i in range(len(indices))]
+    keys = processed[0].keys()
+    return {k: [d[k] for d in processed] for k in keys}
+
+
 def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from the original corpora
     tokenizer: PreTrainedTokenizerFast,
     corpora_original_dir: str,
@@ -237,17 +249,22 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
     # raw_test_trees = raw_test_trees.map(lambda ex: {"text": Tree.fromstring(ex["text"])})
 
     if not eval_mode:
+        # maybe save them as binary?... then it'll be times faster to load.
+        print("loading the trees...")
         with open(f"{corpora_original_dir}/train.nltk", "r", encoding="utf-8") as f:
-            tree_strings = [line.strip() for line in f if line.strip()]
-        train_trees = [nltk.Tree.fromstring(s) for s in tree_strings]
+            tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+        train_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
 
         with open(f"{corpora_original_dir}/dev.nltk", "r", encoding="utf-8") as f:
-            tree_strings = [line.strip() for line in f if line.strip()]
-        dev_trees = [nltk.Tree.fromstring(s) for s in tree_strings]
+            tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+        dev_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
 
         with open(f"{corpora_original_dir}/test.nltk", "r", encoding="utf-8") as f:
-            tree_strings = [line.strip() for line in f if line.strip()]
-        test_trees = [nltk.Tree.fromstring(s) for s in tree_strings]
+            tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+        test_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+
+        del tree_strings
+        print("finished loading the trees")
 
 
     if train_size is not None:
@@ -286,6 +303,7 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
             "valid": dev_trees,
             "test": test_trees,
         }
+        del train_trees, dev_trees, test_trees
 
     if raw_eval is not None:
         dataset_dict["eval"] = raw_eval
@@ -307,18 +325,31 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
                 pass
             elif experiment == 1 and eval_mode != True:
                 # shuffle the trees in the same order:
-                shuffled_indices = raw_datasets[split]["original_index_2"]
-                trees_dict[split] = [trees_dict[split][i] for i in shuffled_indices]
+                # shuffled_indices = raw_datasets[split]["original_index_2"]
+
+                # trees = operator.itemgetter(*shuffled_indices)(trees_dict[split])
+                # trees_dict[split] = [item for item in tqdm(trees, total=len(shuffled_indices), desc="Reordering trees")]
+                # data = np.array(trees_dict[split], dtype=object)
+                sorted_tree = [trees_dict[split][i] for i in tqdm(raw_datasets[split]["original_index_2"])]
+                print("finished reordering the trees")
+                # trees_dict[split] = list(operator.itemgetter(*shuffled_indices)(trees_dict[split]))
+
+                print("doing the swaps")
                 raw_datasets[split] = raw_datasets[split].map(
-                    lambda ex, idx: swap_rules(ex, idx, total_length, p, trees_dict[split][idx]),
+                    # lambda ex, idx: swap_rules(ex, idx, total_length, p, trees_dict[split][idx]),
+                    lambda batch, indices: process_batch(batch, indices, total_length, p, sorted_tree),
                     with_indices=True,
-                    batched=False,
+                    batched=True,
+                    desc=f'Swapping the rules for "{split}"',
                 )
+                del sorted_tree
+                print("finished the swaps")
 
             raw_datasets[split] = raw_datasets[split].map(
                 lambda ex, idx: assign_language_suffix(ex, idx, total_length, p),
                 with_indices=True,
                 batched=False,
+                desc=f'Assigning _en1 & _en2 to "{split}"',
             )
 
             # restore order
@@ -336,7 +367,6 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
     )
 
     return tokenized_datasets
-
 
 
 def load_data_experiment_1(
@@ -665,7 +695,8 @@ def main():
     # if args.experiment == 0:
     datasets = load_data_experiment_0(
         tokenizer,
-        'lm_training/corpora_very_light_2',
+        'lm_training/corpora_11mil',
+        # 'lm_training/corpora_very_light_2',
         p=args.p,
         add_language_pseudo_suffixes=True,
         eval_file=None,
