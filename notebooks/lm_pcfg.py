@@ -61,14 +61,17 @@ def assign_language_suffix(ex, index, total_length, p):
     return {"text": " ".join(processed_tokens)}
 
 
-def swap_children(tree):
+def swap_children(tree, swap_rules=[(r"^S_.*", r"^NP_.*", r"^VP_.*"), (r"^PP_.*", r"^IN_.*", r"^NP_.*")]):
     if isinstance(tree, nltk.Tree):
-        if re.match(r"^S_.*", tree.label()) and len(tree) >= 2:
-            first = tree[0]
-            second = tree[1]
-            if isinstance(first, nltk.Tree) and isinstance(second, nltk.Tree):
-                if re.match(r"^NP_.*", first.label()) and re.match(r"^VP_.*", second.label()):
-                    tree[0], tree[1] = second, first
+        for parent_pattern, first_pattern, second_pattern in swap_rules:
+            if re.match(parent_pattern, tree.label()) and len(tree) >= 2:
+                first = tree[0]
+                second = tree[1]
+                if isinstance(first, nltk.Tree) and isinstance(second, nltk.Tree):
+                    if re.match(first_pattern, first.label()) and re.match(second_pattern, second.label()):
+                        tree[0], tree[1] = second, first
+                        print(tree.label(), first.label(), second.label())
+                        break
         for subtree in tree:
             swap_children(subtree)
 
@@ -80,6 +83,7 @@ def swap_rules(ex, index, total_length, p, original_tree):
         return {"text": ex['text']}
     else:  # the below corresponds to _en2
         orig_sentence = " ".join(original_tree.leaves())
+        # print(original_tree)
         # swapped_tree = copy.deepcopy(original_tree)
         swapped_tree = original_tree
         swap_children(original_tree)
@@ -88,8 +92,14 @@ def swap_rules(ex, index, total_length, p, original_tree):
         # print(orig_sentence)
         # print(ex['text'])
         # print(ex['text'] == orig_sentence)
-        # print(swapped_sentence)
-        # print()
+        # if orig_sentence != swapped_sentence:
+            # print(orig_sentence)
+            # print(swapped_sentence)
+            # print()
+
+            # print(swapped_tree)
+            # print()
+            # print()
 
         return {"text": swapped_sentence}
 
@@ -745,8 +755,8 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
 
-    path_to_corpora = 'lm_training/corpora_11mil'
-    # path_to_corpora = 'lm_training/corpora_very_light_2'
+    # path_to_corpora = 'lm_training/corpora_11mil'
+    path_to_corpora = 'lm_training/corpora_very_light_2'
 
 
     if args.experiment == 0:
