@@ -1,12 +1,18 @@
 import io
 import json
 import os
+import copy
 import pickle
 import random
+from tqdm import tqdm
+import itertools
 import re
 from typing import *
 from typing import Optional
+import operator
 
+import nltk
+from nltk import Tree
 import matplotlib.pyplot as plt
 import numpy as np
 from datasets import Dataset, DatasetDict, load_dataset
@@ -38,16 +44,54 @@ def preprocess_function(examples, p):
     return {"text": processed}
 
 
-def assign_language_suffix(example, index, total_length, p):
+def assign_language_suffix(ex, index, total_length, p):
     # Calculate the threshold index for suffix _en1
     threshold = int(total_length * p)
     suffix = "_en1" if index < threshold else "_en2"
-    tokens = example["text"].split()
+    tokens = ex["text"].split()
+    # TODO: no need for re.search likely
     processed_tokens = [
         token + suffix if re.search(r'[A-Za-z0-9]', token) else token
         for token in tokens
     ]
+
+    # if index >= threshold:
+    #     print(" ".join(processed_tokens))
+    #     print()
     return {"text": " ".join(processed_tokens)}
+
+
+def swap_children(tree):
+    if isinstance(tree, nltk.Tree):
+        if re.match(r"^S_.*", tree.label()) and len(tree) >= 2:
+            first = tree[0]
+            second = tree[1]
+            if isinstance(first, nltk.Tree) and isinstance(second, nltk.Tree):
+                if re.match(r"^NP_.*", first.label()) and re.match(r"^VP_.*", second.label()):
+                    tree[0], tree[1] = second, first
+        for subtree in tree:
+            swap_children(subtree)
+
+
+def swap_rules(ex, index, total_length, p, original_tree):
+    threshold = int(total_length * p)
+
+    if index < threshold: # the below corresponds to _en1
+        return {"text": ex['text']}
+    else:  # the below corresponds to _en2
+        orig_sentence = " ".join(original_tree.leaves())
+        # swapped_tree = copy.deepcopy(original_tree)
+        swapped_tree = original_tree
+        swap_children(original_tree)
+        swapped_sentence = " ".join(swapped_tree.leaves())
+
+        # print(orig_sentence)
+        # print(ex['text'])
+        # print(ex['text'] == orig_sentence)
+        # print(swapped_sentence)
+        # print()
+
+        return {"text": swapped_sentence}
 
 
 def augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2')):
@@ -160,12 +204,66 @@ def tokenize_wrapper(tokenizer):
     return tokenize
 
 
-def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from the original corpora
+
+###### ============================================================================================================
+
+
+def reorder_tree_file_in_batches(input_file, output_file, order, batch_size=10000):
+    offsets = []
+    with open(input_file, 'r') as f:
+        while True:
+            pos = f.tell()
+            line = f.readline()
+            if not line:
+                break
+            offsets.append(pos)
+
+    total_lines = len(order)
+    with open(input_file, 'r') as fin, open(output_file, 'w') as fout:
+        for i in range(0, total_lines, batch_size):
+            batch_order = order[i:i + batch_size]
+            processed_batch = []
+            for idx in batch_order:
+                fin.seek(offsets[idx])
+                line = fin.readline().rstrip()
+                processed_batch.append(line)
+
+            if i + batch_size >= total_lines:
+                fout.write("\n".join(processed_batch))
+            else:
+                fout.write("\n".join(processed_batch) + "\n")
+
+
+def line_generator(filename):
+    with open(filename, 'r') as f:
+        for line in f:
+            yield line.rstrip("\n")
+
+
+def process_batch(batch, indices, total_length, p, line_gen):
+    batch_lines = list(itertools.islice(line_gen, len(indices)))
+    trees = [nltk.Tree.fromstring(s) for s in batch_lines]
+    processed = [
+        swap_rules(
+            {k: batch[k][i] for k in batch},
+            indices[i],
+            total_length,
+            p,
+            trees[i]
+        )
+        for i in range(len(indices))
+    ]
+    keys = processed[0].keys()
+    return {k: [d[k] for d in processed] for k in keys}
+
+
+
+def load_data_raw_datasets(
     tokenizer: PreTrainedTokenizerFast,
     corpora_original_dir: str,
 
     p: float = 1.0,
-    add_language_pseudo_suffixes: bool = False,
+    add_language_pseudo_suffixes=True,
 
     train_size: Optional[int] = None,
     dev_size: Optional[int] = None,
@@ -186,10 +284,15 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
         raw_eval = None
 
     if train_size is not None:
+        # raw_train = raw_train.map(lambda ex, idx: {"original_index": idx}, with_indices=True, batched=False)
         raw_train = raw_train.shuffle().select(range(train_size))
+
     if dev_size is not None:
+        # raw_dev = raw_dev.map(lambda ex, idx: {"original_index": idx}, with_indices=True, batched=False)
         raw_dev = raw_dev.shuffle().select(range(dev_size))
+
     if test_size is not None:
+        # raw_test = raw_test.map(lambda ex, idx: {"original_index": idx}, with_indices=True, batched=False)
         raw_test = raw_test.shuffle().select(range(test_size))
 
     dataset_dict = {
@@ -197,12 +300,11 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
         "valid": raw_dev,
         "test": raw_test,
     }
-
     if raw_eval is not None:
         dataset_dict["eval"] = raw_eval
-
     raw_datasets = DatasetDict(dataset_dict)
 
+    # adding pseudo suffixes
     if add_language_pseudo_suffixes:
         for split in raw_datasets.keys():
             # shuffle again
@@ -223,105 +325,184 @@ def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from
             # restore order
             raw_datasets[split] = raw_datasets[split].sort("original_index")
 
+
+    return raw_datasets
+
+
+
+def load_data_experiment_0(  # only adds _en1 or _en2 to the evaluated data from the original corpora
+    tokenizer: PreTrainedTokenizerFast,
+    corpora_original_dir: str,
+
+    experiment: int,
+
+    p: float = 1.0,
+    add_language_pseudo_suffixes: bool = True,
+
+    train_size: Optional[int] = None,
+    dev_size: Optional[int] = None,
+    test_size: Optional[int] = None,
+
+    train_file = 'train.txt',
+    dev_file = 'dev.txt',
+    test_file = 'test.txt',
+    eval_file = 'eval.txt',
+) -> DatasetDict:
+
+    raw_datasets = load_data_raw_datasets(
+        tokenizer=tokenizer,
+        corpora_original_dir=corpora_original_dir,
+        p=p,
+        add_language_pseudo_suffixes=add_language_pseudo_suffixes,
+        train_size=train_size,
+        dev_size=dev_size,
+        test_size=test_size,
+        train_file=train_file,
+        dev_file=dev_file,
+        test_file=test_file,
+        eval_file=eval_file,
+    )
+
+    tokenized_datasets = raw_datasets.map(
+        tokenize_wrapper(tokenizer),
+        batched=True,
+    )
+
+
+    return tokenized_datasets
+
+
+
+def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from the original corpora
+    tokenizer: PreTrainedTokenizerFast,
+    corpora_original_dir: str,
+
+    experiment: int,
+
+    p: float = 1.0,
+    add_language_pseudo_suffixes: bool = True,
+
+    train_size: Optional[int] = None,
+    dev_size: Optional[int] = None,
+    test_size: Optional[int] = None,
+
+    train_file = 'train.txt',
+    dev_file = 'dev.txt',
+    test_file = 'test.txt',
+    eval_file = 'eval.txt',
+) -> DatasetDict:
+
+    raw_datasets = load_data_raw_datasets(
+        tokenizer=tokenizer,
+        corpora_original_dir=corpora_original_dir,
+        p=p,
+        add_language_pseudo_suffixes=add_language_pseudo_suffixes,
+        train_size=train_size,
+        dev_size=dev_size,
+        test_size=test_size,
+        train_file=train_file,
+        dev_file=dev_file,
+        test_file=test_file,
+        eval_file=eval_file,
+    )
+
+    ##################################
+
+    # # maybe save them as binary?... then it'll be times faster to load.
+    # print("loading the trees...")
+    # with open(f"{corpora_original_dir}/train.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # train_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+
+    # with open(f"{corpora_original_dir}/dev.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # dev_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+
+    # with open(f"{corpora_original_dir}/test.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # test_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+
+    # del tree_strings
+    # print("finished loading the trees")
+
+
+    # trees_dict = {
+    #     "train": train_trees,
+    #     "valid": dev_trees,
+    #     "test": test_trees,
+    # }
+    # del train_trees, dev_trees, test_trees
+
+
+    keys = {
+        "train": "train",
+        "valid": "dev",
+        "test": "test",
+    }
+
+    # add _en1 & _en2 and swap rules in needed
+    if add_language_pseudo_suffixes:
+        for split in raw_datasets.keys():
+            # shuffle again
+            raw_datasets[split] = raw_datasets[split].map(lambda ex, idx: {"original_index_2": idx}, with_indices=True, batched=False)
+            raw_datasets[split] = raw_datasets[split].shuffle()
+
+
+            total_length = len(raw_datasets[split])
+
+            # swapping grammar rules
+            # shuffle the trees in the same order:
+            # shuffled_indices = raw_datasets[split]["original_index_2"]
+
+            # trees = operator.itemgetter(*shuffled_indices)(trees_dict[split])
+            # trees_dict[split] = [item for item in tqdm(trees, total=len(shuffled_indices), desc="Reordering trees")]
+            # data = np.array(trees_dict[split], dtype=object)
+            # trees = []
+            # with open(f"{corpora_original_dir}/{keys[split]}.nltk", "r", encoding="utf-8") as f:
+            #     for line in tqdm(f):
+            #         if line.strip():
+            #             tree_string = line.strip()
+            #             trees.append(nltk.Tree.fromstring(tree_string))
+            # print(raw_datasets[split]["original_index_2"])
+
+
+            # shuffle the trees accordingly
+            print("reordering trees")
+            temp_reordered_tree_filename =  f"{corpora_original_dir}/_temp.nltk"
+            reorder_tree_file_in_batches(f"{corpora_original_dir}/{keys[split]}.nltk", temp_reordered_tree_filename, raw_datasets[split]["original_index_2"], batch_size=10000)
+            print("finished reordering trees")
+            # trees_dict[split] = list(operator.itemgetter(*shuffled_indices)(trees_dict[split]))
+
+            print("doing the swaps")
+            global_line_iter = line_generator(temp_reordered_tree_filename)
+
+            raw_datasets[split] = raw_datasets[split].map(
+                # lambda ex, idx: swap_rules(ex, idx, total_length, p, trees_dict[split][idx]),
+                lambda batch, indices: process_batch(batch, indices, total_length, p, global_line_iter),
+                with_indices=True,
+                batched=True,
+                desc=f'Swapping the rules for "{split}"',
+            )
+            print("finished the swaps")
+
+            raw_datasets[split] = raw_datasets[split].map(
+                lambda ex, idx: assign_language_suffix(ex, idx, total_length, p),
+                with_indices=True,
+                batched=False,
+                desc=f'Assigning _en1 & _en2 to "{split}"',
+            )
+
+            # restore order
+            raw_datasets[split] = raw_datasets[split].sort("original_index_2")
+
     # # second shuffle to randomize the effect of assigning _en1 and _en2...
     # # it's needed for all datasets regardles if they have pseudo_suffixes or not...
     # # e.g. to compare cross_entropy scores (datasets_lm["eval"] with _en1 & _en2) vs (datasets_pcfg["eval"])
     # for split in raw_datasets.keys():
     #     raw_datasets[split] = raw_datasets[split].shuffle(seed=42)
 
-    tokenized_datasets = raw_datasets.map(
-        tokenize_wrapper(tokenizer),
-        batched=True,
-    )
 
-    return tokenized_datasets
-
-
-
-def load_data_experiment_1(
-    tokenizer: PreTrainedTokenizerFast,
-    corpora_original: str,
-    corpora_swapped: str,
-
-    p: float,
-
-    add_language_pseudo_suffixes: bool = False,  # not used actually
-
-    train_size: Optional[int] = None,
-    dev_size: Optional[int] = None,
-    test_size: Optional[int] = None,
-
-) -> DatasetDict:
-
-    train_file = "train.txt"
-    dev_file = "dev.txt"
-    test_file = "test.txt"
-    eval_file = "eval.txt"
-
-    raw_train_orig = load_dataset("text", data_files=os.path.join(corpora_original, train_file))["train"]
-    raw_train_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, train_file))["train"]
-
-    raw_dev_orig = load_dataset("text", data_files=os.path.join(corpora_original, dev_file))["train"]
-    raw_dev_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, dev_file))["train"]
-
-    raw_test_orig = load_dataset("text", data_files=os.path.join(corpora_original, test_file))["train"]
-    raw_test_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, test_file))["train"]
-
-    try:
-        raw_eval_orig = load_dataset("text", data_files=os.path.join(corpora_original, eval_file))["train"]
-        raw_eval_swap = load_dataset("text", data_files=os.path.join(corpora_swapped, eval_file))["train"]
-        eval_exists = True
-    except Exception:
-        eval_exists = False
-
-    if train_size is not None:
-        raw_train_orig = raw_train_orig.shuffle().select(range(train_size))
-        raw_train_swap = raw_train_swap.shuffle().select(range(train_size))
-    if dev_size is not None:
-        raw_dev_orig = raw_dev_orig.shuffle().select(range(dev_size))
-        raw_dev_swap = raw_dev_swap.shuffle().select(range(dev_size))
-    if test_size is not None:
-        raw_test_orig = raw_test_orig.shuffle().select(range(test_size))
-        raw_test_swap = raw_test_swap.shuffle().select(range(test_size))
-    if eval_exists and test_size is not None:
-        raw_eval_orig = raw_eval_orig.shuffle().select(range(test_size))
-        raw_eval_swap = raw_eval_swap.shuffle().select(range(test_size))
-
-    def combine_pairs(orig_texts, swap_texts, p):
-        combined = []
-        for i in range(min(len(orig_texts), len(swap_texts))):
-            if random.random() < p:
-                sentence = orig_texts[i]
-                suffix = "_en1"
-            else:
-                sentence = swap_texts[i]
-                suffix = "_en2"
-            tokens = sentence.split()
-            processed_tokens = []
-            for token in tokens:
-                if re.search(r"[A-Za-z0-9]", token):
-                    processed_tokens.append(token + suffix)
-                else:
-                    processed_tokens.append(token)
-            combined.append(" ".join(processed_tokens))
-        return combined
-
-    combined_train = combine_pairs(raw_train_orig["text"], raw_train_swap["text"], p)
-    combined_dev = combine_pairs(raw_dev_orig["text"], raw_dev_swap["text"], p)
-    combined_test = combine_pairs(raw_test_orig["text"], raw_test_swap["text"], p)
-    if eval_exists:
-        combined_eval = combine_pairs(raw_eval_orig["text"], raw_eval_swap["text"], p)
-    else:
-        combined_eval = None
-
-    dataset_dict = {
-        "train": Dataset.from_dict({"text": combined_train}),
-        "valid": Dataset.from_dict({"text": combined_dev}),
-        "test": Dataset.from_dict({"text": combined_test}),
-    }
-    if combined_eval is not None:
-        dataset_dict["eval"] = Dataset.from_dict({"text": combined_eval})
-    raw_datasets = DatasetDict(dataset_dict)
+    ##################################
 
     tokenized_datasets = raw_datasets.map(
         tokenize_wrapper(tokenizer),
@@ -329,6 +510,8 @@ def load_data_experiment_1(
     )
 
     return tokenized_datasets
+
+
 
 def initialize_model(
     tokenizer: PreTrainedTokenizer, model_type: str, is_mlm: bool = True, **config
@@ -561,11 +744,28 @@ def main():
     vocab = augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2'))
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
+
+    path_to_corpora = 'lm_training/corpora_11mil'
+    # path_to_corpora = 'lm_training/corpora_very_light_2'
+
+
     if args.experiment == 0:
-        datasets = load_data_experiment_0(tokenizer, 'lm_training/corpora_11mil', p=args.p, add_language_pseudo_suffixes=True, eval_file=None)
+        datasets = load_data_experiment_0(
+            tokenizer,
+            path_to_corpora,
+            p=args.p,
+            add_language_pseudo_suffixes=True,
+            eval_file=None,
+            experiment=args.experiment,
+        )
     elif args.experiment == 1:
         datasets = load_data_experiment_1(
-            tokenizer, corpora_original='lm_training/corpora', corpora_swapped="lm_training/corpora__swapped", p=args.p, add_language_pseudo_suffixes=True,
+            tokenizer,
+            path_to_corpora,
+            p=args.p,
+            add_language_pseudo_suffixes=True,
+            eval_file=None,
+            experiment=args.experiment,
         )
 
     is_mlm = False
@@ -669,14 +869,22 @@ def main():
     # _en1
     # datasets_lm might be different from the datsets_pcfg but we need to obtain exactly the same sentences for "eval" as in pcfg_dict
     # ... thus two different variables here.
-    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, p=1.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0)
-    datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
+    datasets_lm = load_data__for_evaluation(
+        tokenizer_lm, corpora_path, p=1.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
+    )
+    datasets_pcfg = load_data__for_evaluation(
+        tokenizer_lm, 'lm_training/corpora', add_language_pseudo_suffixes=False, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
+    )
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
 
     # _en2
-    datasets_lm = load_data__for_evaluation(tokenizer_lm, corpora_path, p=0.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0)
-    datasets_pcfg = load_data__for_evaluation(tokenizer_lm, 'lm_training/corpora', train_size=0, dev_size=0, test_size=0)
+    datasets_lm = load_data__for_evaluation(
+        tokenizer_lm, corpora_path, p=0.0, add_language_pseudo_suffixes=True, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
+    )
+    datasets_pcfg = load_data__for_evaluation(
+        tokenizer_lm, 'lm_training/corpora', add_language_pseudo_suffixes=False, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
+    )
     lm_probs_en2, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig2 = plot_probs(lm_probs_en2, pcfg_probs, "GPT2 EN2 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en2_vs_pcfg")
 
