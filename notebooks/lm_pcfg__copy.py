@@ -5,6 +5,7 @@ import copy
 import pickle
 import random
 from tqdm import tqdm
+import itertools
 import re
 from typing import *
 from typing import Optional
@@ -206,10 +207,55 @@ def tokenize_wrapper(tokenizer):
 
 ###### ============================================================================================================
 
-def process_batch(batch, indices, total_length, p, trees_split):
-    processed = [swap_rules({k: batch[k][i] for k in batch}, indices[i], total_length, p, trees_split[indices[i]]) for i in range(len(indices))]
+
+def reorder_tree_file_in_batches(input_file, output_file, order, batch_size=10000):
+    offsets = []
+    with open(input_file, 'r') as f:
+        while True:
+            pos = f.tell()
+            line = f.readline()
+            if not line:
+                break
+            offsets.append(pos)
+
+    total_lines = len(order)
+    with open(input_file, 'r') as fin, open(output_file, 'w') as fout:
+        for i in range(0, total_lines, batch_size):
+            batch_order = order[i:i + batch_size]
+            processed_batch = []
+            for idx in batch_order:
+                fin.seek(offsets[idx])
+                line = fin.readline().rstrip()
+                processed_batch.append(line)
+
+            if i + batch_size >= total_lines:
+                fout.write("\n".join(processed_batch))
+            else:
+                fout.write("\n".join(processed_batch) + "\n")
+
+
+def line_generator(filename):
+    with open(filename, 'r') as f:
+        for line in f:
+            yield line.rstrip("\n")
+
+
+def process_batch(batch, indices, total_length, p, line_gen):
+    batch_lines = list(itertools.islice(line_gen, len(indices)))
+    trees = [nltk.Tree.fromstring(s) for s in batch_lines]
+    processed = [
+        swap_rules(
+            {k: batch[k][i] for k in batch},
+            indices[i],
+            total_length,
+            p,
+            trees[i]
+        )
+        for i in range(len(indices))
+    ]
     keys = processed[0].keys()
     return {k: [d[k] for d in processed] for k in keys}
+
 
 
 def load_data_raw_datasets(
@@ -362,30 +408,37 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
 
     ##################################
 
-    # maybe save them as binary?... then it'll be times faster to load.
-    print("loading the trees...")
-    with open(f"{corpora_original_dir}/train.nltk", "r", encoding="utf-8") as f:
-        tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
-    train_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+    # # maybe save them as binary?... then it'll be times faster to load.
+    # print("loading the trees...")
+    # with open(f"{corpora_original_dir}/train.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # train_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
 
-    with open(f"{corpora_original_dir}/dev.nltk", "r", encoding="utf-8") as f:
-        tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
-    dev_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+    # with open(f"{corpora_original_dir}/dev.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # dev_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
 
-    with open(f"{corpora_original_dir}/test.nltk", "r", encoding="utf-8") as f:
-        tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
-    test_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
+    # with open(f"{corpora_original_dir}/test.nltk", "r", encoding="utf-8") as f:
+    #     tree_strings = [line.strip() for line in tqdm(f) if line.strip()]
+    # test_trees = [nltk.Tree.fromstring(s) for s in tqdm(tree_strings)]
 
-    del tree_strings
-    print("finished loading the trees")
+    # del tree_strings
+    # print("finished loading the trees")
 
 
-    trees_dict = {
-        "train": train_trees,
-        "valid": dev_trees,
-        "test": test_trees,
+    # trees_dict = {
+    #     "train": train_trees,
+    #     "valid": dev_trees,
+    #     "test": test_trees,
+    # }
+    # del train_trees, dev_trees, test_trees
+
+
+    keys = {
+        "train": "train",
+        "valid": "dev",
+        "test": "test",
     }
-    del train_trees, dev_trees, test_trees
 
     # add _en1 & _en2 and swap rules in needed
     if add_language_pseudo_suffixes:
@@ -404,19 +457,32 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
             # trees = operator.itemgetter(*shuffled_indices)(trees_dict[split])
             # trees_dict[split] = [item for item in tqdm(trees, total=len(shuffled_indices), desc="Reordering trees")]
             # data = np.array(trees_dict[split], dtype=object)
-            sorted_tree = [trees_dict[split][i] for i in tqdm(raw_datasets[split]["original_index_2"])]
-            print("finished reordering the trees")
+            # trees = []
+            # with open(f"{corpora_original_dir}/{keys[split]}.nltk", "r", encoding="utf-8") as f:
+            #     for line in tqdm(f):
+            #         if line.strip():
+            #             tree_string = line.strip()
+            #             trees.append(nltk.Tree.fromstring(tree_string))
+            # print(raw_datasets[split]["original_index_2"])
+
+
+            # shuffle the trees accordingly
+            print("reordering trees")
+            temp_reordered_tree_filename =  f"{corpora_original_dir}/_temp.nltk"
+            reorder_tree_file_in_batches(f"{corpora_original_dir}/{keys[split]}.nltk", temp_reordered_tree_filename, raw_datasets[split]["original_index_2"], batch_size=10000)
+            print("finished reordering trees")
             # trees_dict[split] = list(operator.itemgetter(*shuffled_indices)(trees_dict[split]))
 
             print("doing the swaps")
+            global_line_iter = line_generator(temp_reordered_tree_filename)
+
             raw_datasets[split] = raw_datasets[split].map(
                 # lambda ex, idx: swap_rules(ex, idx, total_length, p, trees_dict[split][idx]),
-                lambda batch, indices: process_batch(batch, indices, total_length, p, sorted_tree),
+                lambda batch, indices: process_batch(batch, indices, total_length, p, global_line_iter),
                 with_indices=True,
                 batched=True,
                 desc=f'Swapping the rules for "{split}"',
             )
-            del sorted_tree
             print("finished the swaps")
 
             raw_datasets[split] = raw_datasets[split].map(
@@ -679,8 +745,8 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
 
-    # path_to_corpora = 'lm_training/corpora_11mil'
-    path_to_corpora = 'lm_training/corpora_very_light_2'
+    path_to_corpora = 'lm_training/corpora_11mil'
+    # path_to_corpora = 'lm_training/corpora_very_light_2'
 
 
     if args.experiment == 0:
