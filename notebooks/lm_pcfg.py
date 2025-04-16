@@ -29,6 +29,7 @@ import torch
 
 import argparse
 
+
 def preprocess_function(examples, p):
     processed = []
     for text in examples["text"]:
@@ -61,22 +62,31 @@ def assign_language_suffix(ex, index, total_length, p):
     return {"text": " ".join(processed_tokens)}
 
 
-def swap_children(tree, swap_rules=[(r"^S_.*", r"^NP_.*", r"^VP_.*"), (r"^PP_.*", r"^IN_.*", r"^NP_.*")]):
+def rule_to_regex(rule_str):
+    parent, rhs = rule_str.split("->")
+    p = parent.strip()
+    c1, c2 = rhs.strip().split()
+    return (rf"^{p}_.*", rf"^{c1}_.*", rf"^{c2}_.*")
+
+
+def swap_children(tree, input_rules):
+# def swap_children(tree, swap_rules=[(r"^S_.*", r"^NP_.*", r"^VP_.*"), (r"^PP_.*", r"^IN_.*", r"^NP_.*")]):
+    rules_to_swap = [rule_to_regex(x) for x in input_rules]
     if isinstance(tree, nltk.Tree):
-        for parent_pattern, first_pattern, second_pattern in swap_rules:
+        for parent_pattern, first_pattern, second_pattern in rules_to_swap:
             if re.match(parent_pattern, tree.label()) and len(tree) >= 2:
                 first = tree[0]
                 second = tree[1]
                 if isinstance(first, nltk.Tree) and isinstance(second, nltk.Tree):
                     if re.match(first_pattern, first.label()) and re.match(second_pattern, second.label()):
                         tree[0], tree[1] = second, first
-                        print(tree.label(), first.label(), second.label())
+                        # print(tree.label(), first.label(), second.label())
                         break
         for subtree in tree:
-            swap_children(subtree)
+            swap_children(subtree, input_rules)
 
 
-def swap_rules(ex, index, total_length, p, original_tree):
+def swap_rules(ex, index, total_length, p, input_rules, original_tree):
     threshold = int(total_length * p)
 
     if index < threshold: # the below corresponds to _en1
@@ -86,20 +96,18 @@ def swap_rules(ex, index, total_length, p, original_tree):
         # print(original_tree)
         # swapped_tree = copy.deepcopy(original_tree)
         swapped_tree = original_tree
-        swap_children(original_tree)
+        swap_children(original_tree, input_rules)
         swapped_sentence = " ".join(swapped_tree.leaves())
 
         # print(orig_sentence)
-        # print(ex['text'])
-        # print(ex['text'] == orig_sentence)
         # if orig_sentence != swapped_sentence:
-            # print(orig_sentence)
-            # print(swapped_sentence)
-            # print()
+        #     # print(orig_sentence)
+        #     print(swapped_sentence)
+        #     print()
 
-            # print(swapped_tree)
-            # print()
-            # print()
+        #     print(swapped_tree)
+        #     print()
+        #     print()
 
         return {"text": swapped_sentence}
 
@@ -250,7 +258,7 @@ def line_generator(filename):
             yield line.rstrip("\n")
 
 
-def process_batch(batch, indices, total_length, p, line_gen):
+def process_batch(batch, indices, total_length, p, input_rules, line_gen):
     batch_lines = list(itertools.islice(line_gen, len(indices)))
     trees = [nltk.Tree.fromstring(s) for s in batch_lines]
     processed = [
@@ -259,7 +267,8 @@ def process_batch(batch, indices, total_length, p, line_gen):
             indices[i],
             total_length,
             p,
-            trees[i]
+            input_rules,
+            trees[i],
         )
         for i in range(len(indices))
     ]
@@ -389,6 +398,7 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
 
     experiment: int,
 
+    input_rules: list,
     p: float = 1.0,
     add_language_pseudo_suffixes: bool = True,
 
@@ -484,11 +494,11 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
             # trees_dict[split] = list(operator.itemgetter(*shuffled_indices)(trees_dict[split]))
 
             print("doing the swaps")
-            global_line_iter = line_generator(temp_reordered_tree_filename)
 
+            global_line_iter = line_generator(temp_reordered_tree_filename)
             raw_datasets[split] = raw_datasets[split].map(
                 # lambda ex, idx: swap_rules(ex, idx, total_length, p, trees_dict[split][idx]),
-                lambda batch, indices: process_batch(batch, indices, total_length, p, global_line_iter),
+                lambda batch, indices: process_batch(batch, indices, total_length, p, input_rules, global_line_iter),
                 with_indices=True,
                 batched=True,
                 desc=f'Swapping the rules for "{split}"',
@@ -737,13 +747,29 @@ load_data__for_evaluation = load_data_experiment_0
 
 
 def main():
+
+    # device = torch.device("cuda:0")
+    # torch.cuda.set_device(device)
+
+    # # reserve dummy memory to lock the GPU:
+    # props     = torch.cuda.get_device_properties(device)
+    # free      = props.total_memory - torch.cuda.memory_reserved(device)
+    # reserve   = int(free * 0.9)
+    # dummy     = torch.empty(reserve // 5, dtype=torch.float32, device=device)
+
+
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--p", type=float, required=True)
     parser.add_argument("--experiment", type=int, choices=range(3), required=True)
+    parser.add_argument("--rule", action="append", help="Grammar production rule", required=True)
     args = parser.parse_args()
 
     print(f"p = {args.p}")
 
+    input_rules = args.rule
+    print(f"Number of rules to swap: {len(input_rules)}")
+    print(f"Number of the unique rules to swap: {len(set(input_rules))}")
 
     with open('lm_training/vocab/added_tokens.json') as f:
         vocab = json.load(f)
@@ -776,6 +802,7 @@ def main():
             add_language_pseudo_suffixes=True,
             eval_file=None,
             experiment=args.experiment,
+            input_rules=input_rules,
         )
 
     is_mlm = False
@@ -825,6 +852,13 @@ def main():
         config=d,
     )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
     # run.summary.update({"p": args.p})
+
+
+
+    # del dummy
+    # torch.cuda.empty_cache()
+
+
 
     trainer = initialize_trainer(
         model, 
