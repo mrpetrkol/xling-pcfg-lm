@@ -846,6 +846,7 @@ def main():
     d = {}
     d.update(vars(args))
     d.update({"basename": os.path.basename(__file__)})
+    d.update({"num_rules_to_swap": len(input_rules)})
 
     run = wandb.init(
         project="pcfg-lm",
