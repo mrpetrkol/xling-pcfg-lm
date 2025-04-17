@@ -921,6 +921,7 @@ def main():
     )
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
+    fig4 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=True, alpha=0.3, s=10, color='red', save_as="en1_vs_pcfg")
 
     # _en2
     datasets_lm = load_data__for_evaluation(
@@ -931,13 +932,20 @@ def main():
     )
     lm_probs_en2, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig2 = plot_probs(lm_probs_en2, pcfg_probs, "GPT2 EN2 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en2_vs_pcfg")
+    fig5 = plot_probs(lm_probs_en2, pcfg_probs, "GPT2 EN2 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=True, alpha=0.3, s=10, color='red', save_as="en2_vs_pcfg")
 
     fig3 = plot_probs(lm_probs_en1, lm_probs_en2, "GPT2 EN1 $\\times$ GPT2 EN2", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_en2")
+    fig6 = plot_probs(lm_probs_en1, lm_probs_en2, "GPT2 EN1 $\\times$ GPT2 EN2", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=True, alpha=0.3, s=10, color='red', save_as="en1_vs_en2")
     print()
 
     log_plot(wandb.run, fig1, step=trainer.state.global_step, label="gpt2_en1_vs_pcfg")
     log_plot(wandb.run, fig2, step=trainer.state.global_step, label="gpt2_en2_vs_pcfg")
     log_plot(wandb.run, fig3, step=trainer.state.global_step, label="gpt2_en1_vs_en2")
+
+    log_plot(wandb.run, fig4, step=trainer.state.global_step, label="gpt2_en1_vs_pcfg_2")
+    log_plot(wandb.run, fig5, step=trainer.state.global_step, label="gpt2_en2_vs_pcfg_2")
+    log_plot(wandb.run, fig6, step=trainer.state.global_step, label="gpt2_en1_vs_en2_2")
+
     # log_plot_as_artifact(wandb.run, fig3, label="en1_vs_en2")
 
     wandb.run.log({
