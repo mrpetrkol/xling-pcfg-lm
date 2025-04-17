@@ -15,7 +15,7 @@ import nltk
 from nltk import Tree
 import matplotlib.pyplot as plt
 import numpy as np
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset, disable_caching
 from PIL import Image
 from scipy.stats import spearmanr
 from sklearn.metrics import r2_score
@@ -30,6 +30,10 @@ import torch
 import argparse
 
 import uuid
+
+
+
+disable_caching()
 
 
 def preprocess_function(examples, p):
@@ -899,19 +903,21 @@ def main():
 
     trainer.train()
 
-    trainer._save_checkpoint(trainer.model, None)
+    # trainer._save_checkpoint(trainer.model, None)
 
 
 
     corpora_path = "lm_training/corpora"
     final_checkpoint = f"checkpoints/checkpoint-{trainer.state.global_step}"
 
-    automodel = AutoModelForCausalLM
-    model = automodel.from_pretrained(f'{final_checkpoint}/')
+    # automodel = AutoModelForCausalLM
+    # model = automodel.from_pretrained(f'{final_checkpoint}/')
+    model = model.cpu()
     model.eval()
 
-    with open(f'{final_checkpoint}/added_tokens.json') as f:
-        vocab_lm = json.load(f)
+    # with open(f'{final_checkpoint}/added_tokens.json') as f:
+    #     vocab_lm = json.load(f)
+    tokenizer.get_added_vocab()
     tokenizer_lm = create_tf_tokenizer_from_vocab(vocab)
     # with open('lm_training/vocab/added_tokens.json') as f:
     #     vocab = json.load(f)
