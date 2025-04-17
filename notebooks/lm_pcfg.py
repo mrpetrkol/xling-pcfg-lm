@@ -29,6 +29,8 @@ import torch
 
 import argparse
 
+import uuid
+
 
 def preprocess_function(examples, p):
     processed = []
@@ -488,7 +490,8 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
 
             # shuffle the trees accordingly
             print("reordering trees")
-            temp_reordered_tree_filename =  f"{corpora_original_dir}/_temp.nltk"
+
+            temp_reordered_tree_filename =  f"{corpora_original_dir}/_temp_{uuid.uuid4().hex}.nltk"
             reorder_tree_file_in_batches(f"{corpora_original_dir}/{keys[split]}.nltk", temp_reordered_tree_filename, raw_datasets[split]["original_index_2"], batch_size=10000)
             print("finished reordering trees")
             # trees_dict[split] = list(operator.itemgetter(*shuffled_indices)(trees_dict[split]))
@@ -504,6 +507,12 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
                 desc=f'Swapping the rules for "{split}"',
             )
             print("finished the swaps")
+
+            # delete the temp file
+            try:
+                os.remove(temp_reordered_tree_filename)
+            except OSError as e:
+                print(f"Could not delete {filename}: {e}")
 
             raw_datasets[split] = raw_datasets[split].map(
                 lambda ex, idx: assign_language_suffix(ex, idx, total_length, p),
@@ -781,8 +790,8 @@ def main():
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
 
-    # path_to_corpora = 'lm_training/corpora_11mil'
-    path_to_corpora = 'lm_training/corpora_very_light_2'
+    path_to_corpora = 'lm_training/corpora_11mil'
+    # path_to_corpora = 'lm_training/corpora_very_light_2'
 
 
     if args.experiment == 0:
