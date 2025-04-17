@@ -418,7 +418,7 @@ def load_data_experiment_1(  # only adds _en1 or _en2 to the evaluated data from
         tokenizer=tokenizer,
         corpora_original_dir=corpora_original_dir,
         p=p,
-        add_language_pseudo_suffixes=add_language_pseudo_suffixes,
+        add_language_pseudo_suffixes=False,  # very important to properly deal with this!!!. Refactor later
         train_size=train_size,
         dev_size=dev_size,
         test_size=test_size,
@@ -771,7 +771,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--p", type=float, required=True)
     parser.add_argument("--experiment", type=int, choices=range(3), required=True)
-    parser.add_argument("--rule", action="append", help="Grammar production rule", required=True)
+    parser.add_argument("--rule", action="append", help="Grammar production rule", required=False, default=[])
     args = parser.parse_args()
 
     print(f"p = {args.p}")
