@@ -10,6 +10,7 @@ import re
 from typing import *
 from typing import Optional
 import operator
+from datetime import datetime
 
 import nltk
 from nltk import Tree
@@ -805,6 +806,8 @@ def main():
     # dummy     = torch.empty(reserve // 5, dtype=torch.float32, device=device)
 
 
+    timestamp = datetime.now().isoformat(timespec='milliseconds')
+
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--p", type=float, required=True)
@@ -895,6 +898,7 @@ def main():
     d.update({"basename": os.path.basename(__file__)})
     d.update({"num_rules_to_swap": len(input_rules)})
     d.update({"input_rules": input_rules})
+    d.update({"start_time": timestamp})
 
     run = wandb.init(
         project="pcfg-lm",
