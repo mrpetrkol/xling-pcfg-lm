@@ -894,6 +894,7 @@ def main():
     d.update(vars(args))
     d.update({"basename": os.path.basename(__file__)})
     d.update({"num_rules_to_swap": len(input_rules)})
+    d.update({"input_rules": input_rules})
 
     run = wandb.init(
         project="pcfg-lm",
@@ -1036,7 +1037,7 @@ def main():
     )
 
     print("cross_entropy_lm_en1:", -np.mean(lm_probs_en1))
-    print("cross_entropy_lm_en2 under _en1:", -np.mean(lm_probs_en2))  # under _en1 distribution
+    print("cross_entropy_lm_en2:", -np.mean(lm_probs_en2))  # under _en1 distribution
     print("cross_entropy_lm_en1 under _en1:", -np.mean(lm_probs_en1_under_en1))
     print("cross_entropy_lm_en2 under _en2:", -np.mean(lm_probs_en2_under_en2))
     print("cross_entropy_pcfg:", -np.mean(pcfg_probs))
