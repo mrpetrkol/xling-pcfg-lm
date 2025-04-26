@@ -644,6 +644,40 @@ def extract_pcfg_and_model_probs(corpus_lm, corpus_pcfg, pcfg_dict, model):
     return np.array(lm_probs), np.array(pcfg_probs)
 
 
+def extract_model_probs(corpus_lm, model, data_collator, suffix, batch_size=512, device=None):
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
+
+    examples = []
+    for text, seq in zip(corpus_lm["text"], corpus_lm["input_ids"]):
+        words = text.split()
+        if not any(w.endswith(suffix) for w in words):
+            continue
+        filtered_ids = [t for t in seq if t is not None]
+        examples.append({"input_ids": torch.tensor(filtered_ids, dtype=torch.long)})
+
+    all_probs = []
+    for i in range(0, len(examples), batch_size):
+        batch = data_collator(examples[i : i + batch_size])
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        with torch.no_grad():
+            out = model(
+                input_ids=input_ids[:, :-1],
+                attention_mask=attention_mask[:, :-1],
+            )
+            logprobs = out.logits.log_softmax(-1)
+
+        lengths = attention_mask.sum(dim=1).tolist()
+        for b_idx, length in enumerate(lengths):
+            for pos in range(1, length):
+                tok_id = input_ids[b_idx, pos].item()
+                all_probs.append(logprobs[b_idx, pos - 1, tok_id].item())
+
+    return np.array(all_probs)
+
+
 def plot_probs(
     lm_probs, 
     pcfg_probs, 
@@ -954,6 +988,33 @@ def main():
     fig6 = plot_probs(lm_probs_en1, lm_probs_en2, "GPT2 EN1 $\\times$ GPT2 EN2", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=True, alpha=0.3, s=10, color='red', save_as="en1_vs_en2")
     print()
 
+
+
+
+    # _en2 under the distribution of _en2
+    data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
+    samples_from_test_set = load_data_experiment_1(
+        tokenizer,
+        corpora_original_dir="lm_training/corpora_11mil",
+        p=0.5,  # 12500 for _en1 12500 for _en2 for Evaluation
+        add_language_pseudo_suffixes=True,
+        train_size=1,
+        dev_size=1,
+        eval_file=None,
+        experiment=args.experiment,
+        input_rules=input_rules,
+    )
+    lm_probs_en1_under_en1 = extract_model_probs(
+        samples_from_test_set["test"], model, data_collator, suffix="_en1",
+    )
+    lm_probs_en2_under_en2 = extract_model_probs(
+        samples_from_test_set["test"], model, data_collator, suffix="_en2",
+    )
+
+
+
+
+
     log_plot(wandb.run, fig1, step=trainer.state.global_step, label="gpt2_en1_vs_pcfg")
     log_plot(wandb.run, fig2, step=trainer.state.global_step, label="gpt2_en2_vs_pcfg")
     log_plot(wandb.run, fig3, step=trainer.state.global_step, label="gpt2_en1_vs_en2")
@@ -967,13 +1028,17 @@ def main():
     wandb.run.log({
             "cross_entropy_lm_en1": -np.mean(lm_probs_en1),
             "cross_entropy_lm_en2": -np.mean(lm_probs_en2),
+            "cross_entropy_lm_en1_under_en1": -np.mean(lm_probs_en1_under_en1),
+            "cross_entropy_lm_en2_under_en2": -np.mean(lm_probs_en2_under_en2),
             "cross_entropy_pcfg": -np.mean(pcfg_probs),
         },
         step=trainer.state.global_step,
     )
 
     print("cross_entropy_lm_en1:", -np.mean(lm_probs_en1))
-    print("cross_entropy_lm_en2:", -np.mean(lm_probs_en2))
+    print("cross_entropy_lm_en2 under _en1:", -np.mean(lm_probs_en2))  # under _en1 distribution
+    print("cross_entropy_lm_en1 under _en1:", -np.mean(lm_probs_en1_under_en1))
+    print("cross_entropy_lm_en2 under _en2:", -np.mean(lm_probs_en2_under_en2))
     print("cross_entropy_pcfg:", -np.mean(pcfg_probs))
 
 
