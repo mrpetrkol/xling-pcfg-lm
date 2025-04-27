@@ -645,7 +645,7 @@ def extract_pcfg_and_model_probs(corpus_lm, corpus_pcfg, pcfg_dict, model):
     return np.array(lm_probs), np.array(pcfg_probs)
 
 
-def extract_model_probs(corpus_lm, model, data_collator, suffix, batch_size=512, device=None):
+def extract_model_probs(corpus_lm, model, data_collator, suffix, batch_size=256, device=None):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device).eval()
