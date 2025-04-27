@@ -891,7 +891,7 @@ def main():
     d.update({"num_rules_to_swap": len(input_rules)})
     d.update({"input_rules": input_rules})
     d.update({"start_time": timestamp})
-    d.update({"custom_filter": "100k validation and test"})
+    d.update({"custom_filter": "100k different: p, num_rules_to_swap"})
     d.update({"path_to_corpora": path_to_corpora})
 
     run = wandb.init(
