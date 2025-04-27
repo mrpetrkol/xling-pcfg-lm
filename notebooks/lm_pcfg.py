@@ -11,6 +11,8 @@ from typing import *
 from typing import Optional
 import operator
 from datetime import datetime
+from contextlib import contextmanager
+import time
 
 import nltk
 from nltk import Tree
@@ -35,6 +37,25 @@ import uuid
 
 
 disable_caching()
+
+
+@contextmanager
+def allocate_tensor(size, device):
+    tensor = None
+    while True:
+        try:
+            tensor = torch.empty(size, dtype=torch.float32, device=device)
+            print("Tensor allocated successfully.")
+            break
+        except RuntimeError as e:
+            print(f"Allocation failed, retrying... ({e})")
+            time.sleep(0.5)
+    try:
+        yield tensor
+    finally:
+        del tensor
+        torch.cuda.empty_cache()
+        print("Tensor deallocated.")
 
 
 def preprocess_function(examples, p):
@@ -821,25 +842,9 @@ def main():
     print(f"Number of rules to swap: {len(input_rules)}")
     print(f"Number of the unique rules to swap: {len(set(input_rules))}")
 
-    path_to_corpora = 'lm_training/corpora_11mil'
+    path_to_corpora = 'lm_training/corpora_11_2mil'
+    # path_to_corpora = 'lm_training/corpora_11mil'
     # path_to_corpora = 'lm_training/corpora_very_light_2'
-
-
-    d = {}
-    d.update(vars(args))
-    d.update({"basename": os.path.basename(__file__)})
-    d.update({"num_rules_to_swap": len(input_rules)})
-    d.update({"input_rules": input_rules})
-    d.update({"start_time": timestamp})
-    d.update({"custom_filter": "ce_on_25k_not_12.5k__check_variance"})
-    d.update({"path_to_corpora": path_to_corpora})
-
-    run = wandb.init(
-        project="pcfg-lm",
-        config=d,
-    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
-    # run.summary.update({"p": args.p})
-    wandb.save(os.path.abspath(__file__))
 
 
 
@@ -854,25 +859,48 @@ def main():
 
 
 
-    if args.experiment == 0:
-        datasets = load_data_experiment_0(
-            tokenizer,
-            path_to_corpora,
-            p=args.p,
-            add_language_pseudo_suffixes=True,
-            eval_file=None,
-            experiment=args.experiment,
-        )
-    elif args.experiment == 1:
-        datasets = load_data_experiment_1(
-            tokenizer,
-            path_to_corpora,
-            p=args.p,
-            add_language_pseudo_suffixes=True,
-            eval_file=None,
-            experiment=args.experiment,
-            input_rules=input_rules,
-        )
+    device = torch.device('cuda:0')
+    gb = 1024**3
+    tensor_size = (20 * gb) // 4  # 10 GB
+
+    with allocate_tensor(tensor_size // 4, device) as tensor:
+        if args.experiment == 0:
+            datasets = load_data_experiment_0(
+                tokenizer,
+                path_to_corpora,
+                p=args.p,
+                add_language_pseudo_suffixes=True,
+                eval_file=None,
+                experiment=args.experiment,
+            )
+        elif args.experiment == 1:
+            datasets = load_data_experiment_1(
+                tokenizer,
+                path_to_corpora,
+                p=args.p,
+                add_language_pseudo_suffixes=True,
+                eval_file=None,
+                experiment=args.experiment,
+                input_rules=input_rules,
+            )
+
+
+    d = {}
+    d.update(vars(args))
+    d.update({"basename": os.path.basename(__file__)})
+    d.update({"num_rules_to_swap": len(input_rules)})
+    d.update({"input_rules": input_rules})
+    d.update({"start_time": timestamp})
+    d.update({"custom_filter": "100k validation and test"})
+    d.update({"path_to_corpora": path_to_corpora})
+
+    run = wandb.init(
+        project="pcfg-lm",
+        config=d,
+    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
+    # run.summary.update({"p": args.p})
+    wandb.save(os.path.abspath(__file__))
+
 
     is_mlm = False
 
@@ -956,8 +984,6 @@ def main():
 
     # automodel = AutoModelForCausalLM
     # model = automodel.from_pretrained(f'{final_checkpoint}/')
-    model = model.cpu()
-    model.eval()
 
     # with open(f'{final_checkpoint}/added_tokens.json') as f:
     #     vocab_lm = json.load(f)
@@ -979,6 +1005,10 @@ def main():
     datasets_pcfg = load_data__for_evaluation(
         tokenizer_lm, 'lm_training/corpora', add_language_pseudo_suffixes=False, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
     )
+
+    model = model.cpu()
+    model.eval()
+
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
     fig4 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=True, alpha=0.3, s=10, color='red', save_as="en1_vs_pcfg")
@@ -1001,12 +1031,12 @@ def main():
 
 
 
-    # _en2 under the distribution of _en2
+    # _en? under the distribution of _en?
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
     samples_from_test_set = load_data_experiment_1(
         tokenizer,
         corpora_original_dir="lm_training/corpora_11mil",
-        p=0.5,  # 12500 for _en1 12500 for _en2 for Evaluation
+        p=1.0,  # for Evaluation
         add_language_pseudo_suffixes=True,
         train_size=1,
         dev_size=1,
@@ -1017,9 +1047,29 @@ def main():
     lm_probs_en1_under_en1 = extract_model_probs(
         samples_from_test_set["test"], model, data_collator, suffix="_en1",
     )
+    # lm_probs_en2_under_en2 = extract_model_probs(
+    #     samples_from_test_set["test"], model, data_collator, suffix="_en2",
+    # )
+
+    data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
+    samples_from_test_set = load_data_experiment_1(
+        tokenizer,
+        corpora_original_dir="lm_training/corpora_11mil",
+        p=0.0,  # for Evaluation
+        add_language_pseudo_suffixes=True,
+        train_size=1,
+        dev_size=1,
+        eval_file=None,
+        experiment=args.experiment,
+        input_rules=input_rules,
+    )
+    # lm_probs_en1_under_en1 = extract_model_probs(
+    #     samples_from_test_set["test"], model, data_collator, suffix="_en1",
+    # )
     lm_probs_en2_under_en2 = extract_model_probs(
         samples_from_test_set["test"], model, data_collator, suffix="_en2",
     )
+
 
 
 
