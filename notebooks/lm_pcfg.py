@@ -821,6 +821,28 @@ def main():
     print(f"Number of rules to swap: {len(input_rules)}")
     print(f"Number of the unique rules to swap: {len(set(input_rules))}")
 
+    path_to_corpora = 'lm_training/corpora_11mil'
+    # path_to_corpora = 'lm_training/corpora_very_light_2'
+
+
+    d = {}
+    d.update(vars(args))
+    d.update({"basename": os.path.basename(__file__)})
+    d.update({"num_rules_to_swap": len(input_rules)})
+    d.update({"input_rules": input_rules})
+    d.update({"start_time": timestamp})
+    d.update({"custom_filter": "ce_on_25k_not_12.5k__check_variance"})
+    d.update({"path_to_corpora": path_to_corpora})
+
+    run = wandb.init(
+        project="pcfg-lm",
+        config=d,
+    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
+    # run.summary.update({"p": args.p})
+    wandb.save(os.path.abspath(__file__))
+
+
+
     with open('lm_training/vocab/added_tokens.json') as f:
         vocab = json.load(f)
     if "<BOS>" not in vocab:
@@ -830,9 +852,6 @@ def main():
     vocab = augment_vocab_with_suffixes(vocab, suffixes=('_en1', '_en2'))
     tokenizer = create_tf_tokenizer_from_vocab(vocab, unk_token='<unk>', pad_token='<pad>', mask_token=None, bos_token='<BOS>', eos_token='<EOS>')
 
-
-    path_to_corpora = 'lm_training/corpora_11mil'
-    # path_to_corpora = 'lm_training/corpora_very_light_2'
 
 
     if args.experiment == 0:
@@ -891,20 +910,6 @@ def main():
 
     batch_size = 64
     lr = 5e-4
-
-    # os.environ["WANDB_PROJECT"] = "pcfg-lm"
-    d = {}
-    d.update(vars(args))
-    d.update({"basename": os.path.basename(__file__)})
-    d.update({"num_rules_to_swap": len(input_rules)})
-    d.update({"input_rules": input_rules})
-    d.update({"start_time": timestamp})
-
-    run = wandb.init(
-        project="pcfg-lm",
-        config=d,
-    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
-    # run.summary.update({"p": args.p})
 
 
 
