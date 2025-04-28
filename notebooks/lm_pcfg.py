@@ -666,7 +666,7 @@ def extract_pcfg_and_model_probs(corpus_lm, corpus_pcfg, pcfg_dict, model):
     return np.array(lm_probs), np.array(pcfg_probs)
 
 
-def extract_model_probs(corpus_lm, model, data_collator, suffix, batch_size=256, device=None):
+def extract_model_probs(corpus_lm, model, data_collator, suffix, batch_size=128, device=None):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device).eval()
@@ -891,7 +891,7 @@ def main():
     d.update({"num_rules_to_swap": len(input_rules)})
     d.update({"input_rules": input_rules})
     d.update({"start_time": timestamp})
-    d.update({"custom_filter": "100k different: p, num_rules_to_swap"})
+    d.update({"custom_filter": "100k validation and test (2)"})
     d.update({"path_to_corpora": path_to_corpora})
 
     run = wandb.init(
@@ -985,6 +985,9 @@ def main():
     # automodel = AutoModelForCausalLM
     # model = automodel.from_pretrained(f'{final_checkpoint}/')
 
+    model = model.cpu()
+    model.eval()
+
     # with open(f'{final_checkpoint}/added_tokens.json') as f:
     #     vocab_lm = json.load(f)
     tokenizer.get_added_vocab()
@@ -996,6 +999,8 @@ def main():
     with open("earleyx_pcfg_dict.pickle", "rb") as f:
         pcfg_dict = pickle.load(f)
 
+
+
     # _en1
     # datasets_lm might be different from the datsets_pcfg but we need to obtain exactly the same sentences for "eval" as in pcfg_dict
     # ... thus two different variables here.
@@ -1006,8 +1011,6 @@ def main():
         tokenizer_lm, 'lm_training/corpora', add_language_pseudo_suffixes=False, train_size=0, dev_size=0, test_size=0, experiment=args.experiment
     )
 
-    model = model.cpu()
-    model.eval()
 
     lm_probs_en1, pcfg_probs = extract_pcfg_and_model_probs(corpus_lm=datasets_lm['eval'][:100], corpus_pcfg=datasets_pcfg['eval'][:100], pcfg_dict=pcfg_dict, model=model)
     fig1 = plot_probs(lm_probs_en1, pcfg_probs, "GPT2 EN1 $\\times$ PCFG", ylim=(-15,0.1), xlim=(-15,0.1), do_scatter=False, mincnt=1, save_as="en1_vs_pcfg")
@@ -1035,7 +1038,7 @@ def main():
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
     samples_from_test_set = load_data_experiment_1(
         tokenizer,
-        corpora_original_dir="lm_training/corpora_11mil",
+        corpora_original_dir="lm_training/corpora_11_2mil",
         p=1.0,  # for Evaluation
         add_language_pseudo_suffixes=True,
         train_size=1,
@@ -1054,7 +1057,7 @@ def main():
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
     samples_from_test_set = load_data_experiment_1(
         tokenizer,
-        corpora_original_dir="lm_training/corpora_11mil",
+        corpora_original_dir="lm_training/corpora_11_2mil",
         p=0.0,  # for Evaluation
         add_language_pseudo_suffixes=True,
         train_size=1,
