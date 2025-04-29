@@ -12,8 +12,9 @@ from typing import *
 from typing import Optional
 import operator
 from datetime import datetime
-from contextlib import contextmanager
 import time
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
+
 
 import nltk
 from nltk import Tree
@@ -41,16 +42,22 @@ disable_caching()
 
 
 @contextmanager
-def silence_stderr():
-    devnull = open(os.devnull, 'w')
-    old_fd = os.dup(2)
-    os.dup2(devnull.fileno(), 2)
-    try:
-        yield
-    finally:
-        os.dup2(old_fd, 2)
-        os.close(old_fd)
-        devnull.close()
+def silence_all():
+    with open(os.devnull, 'w') as devnull:
+        # Python-level suppression
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            # Low-level FD remapping for native prints
+            old_out = os.dup(1)
+            old_err = os.dup(2)
+            os.dup2(devnull.fileno(), 1)
+            os.dup2(devnull.fileno(), 2)
+            try:
+                yield
+            finally:
+                os.dup2(old_out, 1)
+                os.dup2(old_err, 2)
+                os.close(old_out)
+                os.close(old_err)
 
 
 @contextmanager
@@ -921,7 +928,7 @@ def main():
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
 
 
-    with silence_stderr():
+    with silence_all():
         with allocate_tensor(tensor_size // 4, device) as tensor:
             pass
 
