@@ -49,7 +49,7 @@ def allocate_tensor(size, device):
             break
         except RuntimeError as e:
             print(f"Allocation failed, retrying... ({e})")
-            time.sleep(0.5)
+            time.sleep(10)
     try:
         yield tensor
     finally:
@@ -863,26 +863,26 @@ def main():
     gb = 1024**3
     tensor_size = (20 * gb) // 4  # 10 GB
 
-    with allocate_tensor(tensor_size // 4, device) as tensor:
-        if args.experiment == 0:
-            datasets = load_data_experiment_0(
-                tokenizer,
-                path_to_corpora,
-                p=args.p,
-                add_language_pseudo_suffixes=True,
-                eval_file=None,
-                experiment=args.experiment,
-            )
-        elif args.experiment == 1:
-            datasets = load_data_experiment_1(
-                tokenizer,
-                path_to_corpora,
-                p=args.p,
-                add_language_pseudo_suffixes=True,
-                eval_file=None,
-                experiment=args.experiment,
-                input_rules=input_rules,
-            )
+    # with allocate_tensor(tensor_size // 4, device) as tensor:
+    if args.experiment == 0:
+        datasets = load_data_experiment_0(
+            tokenizer,
+            path_to_corpora,
+            p=args.p,
+            add_language_pseudo_suffixes=True,
+            eval_file=None,
+            experiment=args.experiment,
+        )
+    elif args.experiment == 1:
+        datasets = load_data_experiment_1(
+            tokenizer,
+            path_to_corpora,
+            p=args.p,
+            add_language_pseudo_suffixes=True,
+            eval_file=None,
+            experiment=args.experiment,
+            input_rules=input_rules,
+        )
 
 
     d = {}
