@@ -49,7 +49,7 @@ def allocate_tensor(size, device):
             break
         except RuntimeError as e:
             print(f"Allocation failed, retrying... ({e})")
-            time.sleep(10)
+            time.sleep(0.5)
     try:
         yield tensor
     finally:
@@ -846,6 +846,15 @@ def main():
     # path_to_corpora = 'lm_training/corpora_11mil'
     # path_to_corpora = 'lm_training/corpora_very_light_2'
 
+    d = {}
+    d.update(vars(args))
+    d.update({"basename": os.path.basename(__file__)})
+    d.update({"num_rules_to_swap": len(input_rules)})
+    d.update({"input_rules": input_rules})
+    d.update({"start_time": timestamp})
+    d.update({"custom_filter": "100k validation and test (2)"})
+    d.update({"path_to_corpora": path_to_corpora})
+
 
 
     with open('lm_training/vocab/added_tokens.json') as f:
@@ -884,16 +893,6 @@ def main():
             input_rules=input_rules,
         )
 
-
-    d = {}
-    d.update(vars(args))
-    d.update({"basename": os.path.basename(__file__)})
-    d.update({"num_rules_to_swap": len(input_rules)})
-    d.update({"input_rules": input_rules})
-    d.update({"start_time": timestamp})
-    d.update({"custom_filter": "100k validation and test (2)"})
-    d.update({"path_to_corpora": path_to_corpora})
-
     run = wandb.init(
         project="pcfg-lm",
         config=d,
@@ -905,6 +904,12 @@ def main():
     is_mlm = False
 
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
+
+
+    wandb.disabled = True
+    with allocate_tensor(tensor_size // 4, device) as tensor:
+        pass
+    wandb.disabled = False
 
     model = initialize_model(
         tokenizer, 
