@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sys
 import copy
 import pickle
 import random
@@ -37,6 +38,19 @@ import uuid
 
 
 disable_caching()
+
+
+@contextmanager
+def silence_stderr():
+    devnull = open(os.devnull, 'w')
+    old_fd = os.dup(2)
+    os.dup2(devnull.fileno(), 2)
+    try:
+        yield
+    finally:
+        os.dup2(old_fd, 2)
+        os.close(old_fd)
+        devnull.close()
 
 
 @contextmanager
@@ -831,6 +845,7 @@ def main():
 
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--my_filter", type=str, required=True)
     parser.add_argument("--p", type=float, required=True)
     parser.add_argument("--experiment", type=int, choices=range(3), required=True)
     parser.add_argument("--rule", action="append", help="Grammar production rule", required=False, default=[])
@@ -852,8 +867,15 @@ def main():
     d.update({"num_rules_to_swap": len(input_rules)})
     d.update({"input_rules": input_rules})
     d.update({"start_time": timestamp})
-    d.update({"custom_filter": "100k validation and test (2)"})
+    d.update({"custom_filter": args.my_filter})
     d.update({"path_to_corpora": path_to_corpora})
+
+    run = wandb.init(
+        project="pcfg-lm",
+        config=d,
+    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
+    # run.summary.update({"p": args.p})
+    wandb.save(os.path.abspath(__file__))
 
 
 
@@ -893,23 +915,16 @@ def main():
             input_rules=input_rules,
         )
 
-    run = wandb.init(
-        project="pcfg-lm",
-        config=d,
-    )  #, run_name=f"bsz_{batch_size}-lr_{lr}")
-    # run.summary.update({"p": args.p})
-    wandb.save(os.path.abspath(__file__))
-
 
     is_mlm = False
 
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=is_mlm)
 
 
-    wandb.disabled = True
-    with allocate_tensor(tensor_size // 4, device) as tensor:
-        pass
-    wandb.disabled = False
+    with silence_stderr():
+        with allocate_tensor(tensor_size // 4, device) as tensor:
+            pass
+
 
     model = initialize_model(
         tokenizer, 
